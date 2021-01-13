@@ -478,6 +478,10 @@ def compute_loss(p, targets, model):  # predictions, targets, model
             #pwh = torch.exp(ps[:, 2:4]).clamp(max=1E3) * anchors[i]
             pbox = torch.cat((pxy, pwh), 1).to(device)  # predicted box
             giou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # giou(prediction, target)
+            # TODO: put dont care here
+            #   * get what index are dont care (-1) with tcls
+            #   * maybe is possible to use this bbox_iou to detect intersection with dont care bouding box
+            #   * if exists a tcls value with -1, get that index and filter from tbox (and maybe pbox too)
             lbox += (1.0 - giou).mean()  # giou loss
 
             # Objectness
