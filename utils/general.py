@@ -446,6 +446,17 @@ def compute_loss(p, targets, model):  # predictions, targets, model
     tcls, tbox, indices, anchors = build_targets(p, targets, model)  # targets
     h = model.hyp  # hyperparameters
 
+    # This solution for dont care create more problems that i dont like to solve
+    # get mask for dont care, using class 0 for now
+    # mask all target variables
+    # for i, _ in enumerate(p):  # layer index, layer predictions
+    #     dontcare_mask = tcls[i] != 0
+    #     tcls[i] = tcls[i][dontcare_mask]
+    #     tbox[i] = tbox[i][dontcare_mask]
+    #     anchors[i] = anchors[i][dontcare_mask]
+    #     for ii, _ in enumerate(indices):
+    #         indices[i][ii] = indices[i][ii][dontcare_mask]
+
     # Define criteria
     BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([h['cls_pw']])).to(device)
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([h['obj_pw']])).to(device)
@@ -466,18 +477,27 @@ def compute_loss(p, targets, model):  # predictions, targets, model
         b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
         tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
 
-        n = b.shape[0]  # number of targets
+        # get mask for dont care, using class 0 for now
+        # TODO maybe i can use the loop above without interact with indices list
+        #   remove this for lines below and maintain only indexes interaction
+        dontcare_mask = tcls[i] != 0
+        cls = tcls[i][dontcare_mask]
+        box = tbox[i][dontcare_mask]
+        anch = anchors[i][dontcare_mask]
+
+        n = b[dontcare_mask].shape[0]  # number of targets
         if n:
             nt += n  # cumulative targets
             ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
+            ps = ps[dontcare_mask]
 
             # Regression
             pxy = ps[:, :2].sigmoid() * 2. - 0.5
-            pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
+            pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anch
             #pxy = torch.sigmoid(ps[:, 0:2])  # pxy = pxy * s - (s - 1) / 2,  s = 1.5  (scale_xy)
             #pwh = torch.exp(ps[:, 2:4]).clamp(max=1E3) * anchors[i]
             pbox = torch.cat((pxy, pwh), 1).to(device)  # predicted box
-            giou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # giou(prediction, target)
+            giou = bbox_iou(pbox.T, box, x1y1x2y2=False, CIoU=True)  # giou(prediction, target)
             # TODO: put dont care here
             #   * get what index are dont care (-1) with tcls
             #   * maybe is possible to use this bbox_iou to detect intersection with dont care bouding box
@@ -485,12 +505,13 @@ def compute_loss(p, targets, model):  # predictions, targets, model
             lbox += (1.0 - giou).mean()  # giou loss
 
             # Objectness
-            tobj[b, a, gj, gi] = (1.0 - model.gr) + model.gr * giou.detach().clamp(0).type(tobj.dtype)  # giou ratio
+            # i dont whats this do but i think is correct eheheh
+            tobj[b, a, gj, gi][dontcare_mask] = (1.0 - model.gr) + model.gr * giou.detach().clamp(0).type(tobj.dtype)  # giou ratio
 
             # Classification
             if model.nc > 1:  # cls loss (only if multiple classes)
                 t = torch.full_like(ps[:, 5:], cn, device=device)  # targets
-                t[range(n), tcls[i]] = cp
+                t[range(ps.shape[0]), cls] = cp
                 lcls += BCEcls(ps[:, 5:], t)  # BCE
 
             # Append targets to text file
